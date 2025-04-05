@@ -1,34 +1,48 @@
 ﻿using Microsoft.SqlServer.TransactSql.ScriptDom;
-using System.Text.RegularExpressions;
+using System.Collections.Generic;
 
 namespace FixQLLibrary
 {
     public class ValueParameterizer : TSqlFragmentVisitor
     {
-        private Dictionary<string, object> parameters;
-        private int parameterCounter = 0;
-        private string originalSql; 
-        public ValueParameterizer(Dictionary<string, object> parameters, string originalSql) 
+        private readonly Dictionary<string, object> _parameters;
+        private int _parameterCounter;
+
+        public ValueParameterizer(Dictionary<string, object> parameters, string originalSql)
         {
-            this.parameters = parameters;
-            this.originalSql = originalSql; 
+            _parameters = parameters;
+            _parameterCounter = 0;
         }
 
-        public override void Visit(StringLiteral node)
+        public override void Visit(BooleanComparisonExpression node)
         {
-            string paramName = $"@value{parameterCounter++}";
-            string value = node.Value;
-            Regex variableRegex = new Regex(@"' \+ (\w+)");
-            Match match = variableRegex.Match(originalSql);
-            if (match.Success)
+            if (node.SecondExpression is StringLiteral strLiteral)
             {
-                paramName = "@" + match.Groups[1].Value;
+                ReplaceWithVariable(node, strLiteral.Value);
+            }
+            else if (node.SecondExpression is IntegerLiteral intLiteral)
+            {
+                ReplaceWithVariable(node, int.Parse(intLiteral.Value));
+            }
+            else if (node.SecondExpression is RealLiteral realLiteral)
+            {
+                ReplaceWithVariable(node, double.Parse(realLiteral.Value));
+            }
+            else if (node.SecondExpression is NullLiteral)
+            {
+                ReplaceWithVariable(node, null);
             }
 
-            parameters.Add(paramName, value);
-            node.Value = paramName;
+            base.Visit(node); 
         }
 
-    }
+        private void ReplaceWithVariable(BooleanComparisonExpression node, object value)
+        {
+            string paramName = $"@param{_parameterCounter++}";
+            _parameters[paramName] = value;
 
+            var variable = new VariableReference { Name = paramName };
+            node.SecondExpression = variable;
+        }
+    }
 }

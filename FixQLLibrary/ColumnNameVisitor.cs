@@ -5,11 +5,11 @@ namespace FixQLLibrary
 {
     public class ColumnNameVisitor : TSqlFragmentVisitor
     {
-        private object dbContextOrDapperType;
+        private readonly object _dbContextOrDapperType;
 
         public ColumnNameVisitor(object dbContextOrDapperType)
         {
-            this.dbContextOrDapperType = dbContextOrDapperType;
+            _dbContextOrDapperType = dbContextOrDapperType;
         }
 
         public override void Visit(ColumnReferenceExpression node)
@@ -19,45 +19,44 @@ namespace FixQLLibrary
                 string tableName = node.MultiPartIdentifier.Identifiers[0].Value;
                 string columnName = node.MultiPartIdentifier.Identifiers[1].Value;
 
-                if (dbContextOrDapperType is DbContext dbContext)
+                if (_dbContextOrDapperType is DbContext dbContext)
                 {
-                    var entityType = dbContext.Model.GetEntityTypes().FirstOrDefault(e => e.GetTableName() == tableName);
-                    if (entityType != null)
+                    var entity = dbContext.Model.GetEntityTypes()
+                        .FirstOrDefault(e => e.GetTableName() == tableName);
+
+                    if (entity != null)
                     {
-                        var allowedColumns = entityType.GetProperties().Select(p => p.GetColumnName()).ToList();
+                        var allowedColumns = entity.GetProperties()
+                            .Select(p => p.GetColumnName())
+                            .ToList();
+
                         if (!allowedColumns.Contains(columnName, StringComparer.OrdinalIgnoreCase))
-                        {
-                            throw new Exception($"Invalid column name: {columnName} in table {tableName}");
-                        }
+                            throw new Exception($"Invalid column '{columnName}' in table '{tableName}'");
                     }
                 }
                 else
                 {
-                    
-                    var allowedColumns = GetDapperColumns(dbContextOrDapperType, tableName);
+                    var allowedColumns = GetDapperColumns(_dbContextOrDapperType, tableName);
                     if (allowedColumns != null && !allowedColumns.Contains(columnName, StringComparer.OrdinalIgnoreCase))
-                    {
-                        throw new Exception($"Invalid column name: {columnName} in table {tableName}");
-                    }
+                        throw new Exception($"Invalid column '{columnName}' in table '{tableName}'");
                 }
             }
         }
 
-        private List<string> GetDapperColumns(object dapperType, string tableName)
+        private List<string> GetDapperColumns(object dapperModel, string tableName)
         {
-            if (dapperType == null) return null;
-            var properties = dapperType.GetType().GetProperties();
-            foreach (var property in properties)
+            if (dapperModel == null) return null;
+
+            foreach (var prop in dapperModel.GetType().GetProperties())
             {
-                if (property.PropertyType.IsGenericType && property.PropertyType.GetGenericTypeDefinition() == typeof(List<>))
+                if (prop.PropertyType.IsGenericType && prop.PropertyType.GetGenericTypeDefinition() == typeof(List<>))
                 {
-                    var genericArgument = property.PropertyType.GetGenericArguments()[0];
-                    if (genericArgument.Name.Equals(tableName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return genericArgument.GetProperties().Select(p => p.Name).ToList();
-                    }
+                    var type = prop.PropertyType.GetGenericArguments()[0];
+                    if (type.Name.Equals(tableName, StringComparison.OrdinalIgnoreCase))
+                        return type.GetProperties().Select(p => p.Name).ToList();
                 }
             }
+
             return null;
         }
     }
