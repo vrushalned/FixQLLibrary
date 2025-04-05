@@ -45,6 +45,7 @@ namespace FixQLLibrary
             fragment.Accept(new ExecuteStatementVisitor());
             fragment.Accept(new UnionVisitor());
             fragment.Accept(new WaitForVisitor());
+            fragment.Accept(new VulnerableJoinVisitor());
             fragment.Accept(new ValueParameterizer(parameters, ""));
 
         }
