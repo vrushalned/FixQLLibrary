@@ -1,6 +1,7 @@
 ﻿using Microsoft.SqlServer.TransactSql.ScriptDom;
 using System.Data.Common;
 using System.Text.RegularExpressions;
+using FixQLLibrary.Anomaly;
 
 namespace FixQLLibrary
 {
@@ -11,10 +12,6 @@ namespace FixQLLibrary
             parameters = new Dictionary<string, object>();
             detections = new List<string>();
             string error = null;
-
-            var upper = sql.ToUpperInvariant();
-
-            
 
             if (sql.Contains("--") || sql.Contains("/*"))
                 detections.Add("Comment Detected");
@@ -31,13 +28,6 @@ namespace FixQLLibrary
                 return "[BLOCKED]";
             }
 
-            if (sqlFragment is TSqlScript script && script.Batches.Count > 1)
-            {
-                detections.Add("Multiple Statements");
-                error = "Multiple SQL statements are not allowed.";
-                return "[BLOCKED]";
-            }
-
             try
             {
                 SanitizeTableAndColumns(sqlFragment, dbContextOrDapperType);
@@ -47,6 +37,33 @@ namespace FixQLLibrary
             {
                 error = ex.Message;
                 return "[BLOCKED]";
+            }
+
+            if (sqlFragment is TSqlScript script && script.Batches.Count > 1)
+            {
+                detections.Add("Multiple Statements");
+                error = "Multiple SQL statements are not allowed.";
+                return "[BLOCKED]";
+            }
+
+            var fingerprint = QueryAnomalyDetector.GetFingerprint(sqlFragment);
+
+            if (!ApprovedQueryStore.IsApproved(fingerprint))
+            {
+                if (InMemoryQueryAnomalyTracker.IsNewFingerprint(fingerprint, out int count))
+                {
+                    detections.Add("Query Anomaly");
+                    detections.Add($"Fingerprint: {fingerprint}");
+                    detections.Add($"Seen Count: {count}");
+
+                    AnomalyLogStore.Record(fingerprint, detections, sql);
+                }
+
+                if (count == 1)
+                {
+                    error = "Blocked: Unapproved anomalous query.";
+                    return "[BLOCKED]";
+                }
             }
 
             if (detections.Any(d =>
@@ -66,23 +83,21 @@ namespace FixQLLibrary
 
         private static void CheckForPiggyBacking(string sql, List<string> detections)
         {
-            //var cleanSql = sql.ToUpperInvariant().Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
             var cleanSql = sql
-    .ToUpperInvariant()
-    .Replace("\r", " ")
-    .Replace("\n", " ")
-    .Replace("\t", " ")
-    .Replace(";", " ; ")
-    .Replace("(", " ")
-    .Replace(")", " ")
-    .Replace("'", " ")
-    .Replace("\"", " ")
-    .Replace("=", " ")
-    .Replace(",", " ")
-    .Replace("--", " ")
-    .Replace("/*", " ")
-    .Replace("*/", " ");
-
+                .ToUpperInvariant()
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Replace("\t", " ")
+                .Replace(";", " ; ")
+                .Replace("(", " ")
+                .Replace(")", " ")
+                .Replace("'", " ")
+                .Replace("\"", " ")
+                .Replace("=", " ")
+                .Replace(",", " ")
+                .Replace("--", " ")
+                .Replace("/*", " ")
+                .Replace("*/", " ");
 
             if (Regex.IsMatch(cleanSql, @"\bUPDATE\b")) detections.Add("UPDATE Detected");
             if (Regex.IsMatch(cleanSql, @"\bDROP\b")) detections.Add("DROP Detected");
@@ -129,9 +144,6 @@ namespace FixQLLibrary
             if (insertVisitor.Found) detections.Add("INSERT Statement");
             if (dropVisitor.Found) detections.Add("DROP Statement");
 
-            Console.WriteLine($"[Visitor] UPDATE Statement Visitor: {updateVisitor.Found}");
-
-
             fragment.Accept(new VulnerableJoinVisitor());
             fragment.Accept(new ValueParameterizer(parameters, ""));
         }
@@ -152,7 +164,7 @@ namespace FixQLLibrary
             }
 
             dict["Encrypt"] = "True";
-            dict["TrustServerCertificate"] = "False";
+            dict["TrustServerCertificate"] = "True";
 
             if (dict.TryGetValue("User Id", out var user) && user.Equals("sa", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Do not use the 'sa' account.");
