@@ -8,12 +8,14 @@ namespace FixQLLibrary
         {
             "xp_cmdshell", "sp_configure", "sp_executesql", "xp_regread", "xp_regwrite"
         };
+        public bool Found { get; private set; } = false;
 
         public override void Visit(ExecuteStatement node)
         {
+
             if (node.ExecuteSpecification.ExecutableEntity is ExecutableStringList)
             {
-                throw new InvalidOperationException("Dynamic SQL execution via EXEC is not allowed.");
+                Found = true;
             }
 
             if (node.ExecuteSpecification.ExecutableEntity is ExecutableProcedureReference execProc)
@@ -24,7 +26,7 @@ namespace FixQLLibrary
                 {
                     if (procName.Equals(dangerousProc, StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new InvalidOperationException($"Use of dangerous procedure: {procName} is not allowed.");
+                        Found = true;
                     }
                 }
             }

@@ -1,35 +1,97 @@
 ﻿using Microsoft.SqlServer.TransactSql.ScriptDom;
 using System.Data.Common;
-
+using System.Text.RegularExpressions;
 
 namespace FixQLLibrary
 {
     public class FixQL
     {
-        public static string SanitizeQuery(string sql, object dbContextOrDapperType, out Dictionary<string, object> parameters)
+        public static string SanitizeQuery(string sql, object dbContextOrDapperType, out Dictionary<string, object> parameters, out List<string> detections)
         {
             parameters = new Dictionary<string, object>();
-            TSqlParser parser = new TSql150Parser(true);
-            IList<ParseError> errors;
-            
-            TSqlFragment sqlFragment = parser.Parse(new System.IO.StringReader(sql), out errors);
+            detections = new List<string>();
+            string error = null;
+
+            var upper = sql.ToUpperInvariant();
 
             
-            if (sqlFragment is TSqlScript script && script.Batches.Count > 1)
-            {
-                throw new InvalidOperationException("Multiple SQL statements are not allowed.");
-            }
+
+            if (sql.Contains("--") || sql.Contains("/*"))
+                detections.Add("Comment Detected");
+
+            CheckForPiggyBacking(sql, detections);
+
+            var parser = new TSql150Parser(true);
+            IList<ParseError> errors;
+            var sqlFragment = parser.Parse(new StringReader(sql), out errors);
 
             if (errors.Count > 0)
-                throw new InvalidOperationException("SQL parse failed.");
-            if (sql.Contains("--") || sql.Contains("/*"))
             {
-                throw new InvalidOperationException("SQL comments are not allowed.");
+                error = "SQL parse failed.";
+                return "[BLOCKED]";
             }
 
-            SanitizeTableAndColumns(sqlFragment, dbContextOrDapperType);
-            ApplySecurityVisitors(sqlFragment, parameters);
+            if (sqlFragment is TSqlScript script && script.Batches.Count > 1)
+            {
+                detections.Add("Multiple Statements");
+                error = "Multiple SQL statements are not allowed.";
+                return "[BLOCKED]";
+            }
+
+            try
+            {
+                SanitizeTableAndColumns(sqlFragment, dbContextOrDapperType);
+                ApplySecurityVisitors(sqlFragment, parameters, detections);
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return "[BLOCKED]";
+            }
+
+            if (detections.Any(d =>
+                d.Contains("Piggybacked") ||
+                d.Contains("Multiple") ||
+                d.Contains("DROP") ||
+                d.Contains("UPDATE") ||
+                d.Contains("DELETE") ||
+                d.Contains("EXEC")))
+            {
+                error = "Query blocked due to dangerous pattern.";
+                return "[BLOCKED]";
+            }
+
             return GetSqlFromFragment(sqlFragment);
+        }
+
+        private static void CheckForPiggyBacking(string sql, List<string> detections)
+        {
+            //var cleanSql = sql.ToUpperInvariant().Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+            var cleanSql = sql
+    .ToUpperInvariant()
+    .Replace("\r", " ")
+    .Replace("\n", " ")
+    .Replace("\t", " ")
+    .Replace(";", " ; ")
+    .Replace("(", " ")
+    .Replace(")", " ")
+    .Replace("'", " ")
+    .Replace("\"", " ")
+    .Replace("=", " ")
+    .Replace(",", " ")
+    .Replace("--", " ")
+    .Replace("/*", " ")
+    .Replace("*/", " ");
+
+
+            if (Regex.IsMatch(cleanSql, @"\bUPDATE\b")) detections.Add("UPDATE Detected");
+            if (Regex.IsMatch(cleanSql, @"\bDROP\b")) detections.Add("DROP Detected");
+            if (Regex.IsMatch(cleanSql, @"\bDELETE\b")) detections.Add("DELETE Detected");
+            if (Regex.IsMatch(cleanSql, @"\bINSERT\b")) detections.Add("INSERT Detected");
+            if (Regex.IsMatch(cleanSql, @"\bEXEC\b")) detections.Add("EXEC Detected");
+
+            if (cleanSql.Contains(";"))
+                detections.Add("Piggybacked Query");
         }
 
         private static void SanitizeTableAndColumns(TSqlFragment fragment, object dbContextOrDapperType)
@@ -38,16 +100,40 @@ namespace FixQLLibrary
             fragment.Accept(new ColumnNameVisitor(dbContextOrDapperType));
         }
 
-        private static void ApplySecurityVisitors(TSqlFragment fragment, Dictionary<string, object> parameters)
+        private static void ApplySecurityVisitors(TSqlFragment fragment, Dictionary<string, object> parameters, List<string> detections)
         {
-            fragment.Accept(new TautologyVisitor());
-            fragment.Accept(new FunctionCallVisitor());
-            fragment.Accept(new ExecuteStatementVisitor());
-            fragment.Accept(new UnionVisitor());
-            fragment.Accept(new WaitForVisitor());
+            var tautologyVisitor = new TautologyVisitor();
+            var unionVisitor = new UnionVisitor();
+            var execVisitor = new ExecuteStatementVisitor();
+            var waitVisitor = new WaitForVisitor();
+            var updateVisitor = new UpdateStatementVisitor();
+            var deleteVisitor = new DeleteStatementVisitor();
+            var insertVisitor = new InsertStatementVisitor();
+            var dropVisitor = new DropStatementVisitor();
+
+            fragment.Accept(tautologyVisitor);
+            fragment.Accept(unionVisitor);
+            fragment.Accept(execVisitor);
+            fragment.Accept(waitVisitor);
+            fragment.Accept(updateVisitor);
+            fragment.Accept(deleteVisitor);
+            fragment.Accept(insertVisitor);
+            fragment.Accept(dropVisitor);
+
+            if (tautologyVisitor.Found) detections.Add("Tautology");
+            if (unionVisitor.Found) detections.Add("UNION");
+            if (execVisitor.Found) detections.Add("EXEC or xp_cmdshell");
+            if (waitVisitor.Found) detections.Add("WAITFOR DELAY");
+            if (updateVisitor.Found) detections.Add("UPDATE Statement");
+            if (deleteVisitor.Found) detections.Add("DELETE Statement");
+            if (insertVisitor.Found) detections.Add("INSERT Statement");
+            if (dropVisitor.Found) detections.Add("DROP Statement");
+
+            Console.WriteLine($"[Visitor] UPDATE Statement Visitor: {updateVisitor.Found}");
+
+
             fragment.Accept(new VulnerableJoinVisitor());
             fragment.Accept(new ValueParameterizer(parameters, ""));
-
         }
 
         public static string SanitizeConnectionString(string raw)
@@ -77,9 +163,9 @@ namespace FixQLLibrary
             return string.Join(";", dict.Select(kv => $"{kv.Key}={kv.Value}"));
         }
 
-        public static DbCommand GetSanitizedCommand(DbCommand command, string sql, object dbContextOrDapperType, out Dictionary<string, object> parameters)
+        public static DbCommand GetSanitizedCommand(DbCommand command, string sql, object dbContextOrDapperType, out Dictionary<string, object> parameters, out List<string> detections)
         {
-            string sanitizedSql = SanitizeQuery(sql, dbContextOrDapperType, out parameters);
+            var sanitizedSql = SanitizeQuery(sql, dbContextOrDapperType, out parameters, out detections);
             command.CommandText = sanitizedSql;
 
             foreach (var parameter in parameters)
@@ -99,7 +185,5 @@ namespace FixQLLibrary
             generator.GenerateScript(fragment, out string sql);
             return sql;
         }
-
     }
 }
-

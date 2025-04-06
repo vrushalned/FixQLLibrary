@@ -4,13 +4,14 @@ namespace FixQLLibrary
 {
     public class TautologyVisitor : TSqlFragmentVisitor
     {
+        public bool Found { get; private set; } = false;
         public override void Visit(BooleanBinaryExpression node)
         {
             if (node.BinaryExpressionType == BooleanBinaryExpressionType.Or)
             {
                 if (IsLiteralComparison(node.FirstExpression) || IsLiteralComparison(node.SecondExpression))
                 {
-                    throw new InvalidOperationException("Tautology detected: Use of OR with always-true condition.");
+                   Found = true;
                 }
             }
 

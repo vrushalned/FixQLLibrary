@@ -11,7 +11,7 @@ queryCommand.SetHandler((string sql) =>
 {
     try
     {
-        var result = FixQL.SanitizeQuery(sql, null, out var parameters);
+        var result = FixQL.SanitizeQuery(sql, null, out var parameters, out var detections);
         Console.WriteLine("Sanitized SQL:");
         Console.WriteLine(result);
         Console.WriteLine("Parameters:");

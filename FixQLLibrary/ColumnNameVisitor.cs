@@ -14,6 +14,13 @@ namespace FixQLLibrary
 
         public override void Visit(ColumnReferenceExpression node)
         {
+            if (node.MultiPartIdentifier == null)
+                return; 
+
+            var columnNames = node.MultiPartIdentifier.Identifiers.LastOrDefault()?.Value;
+            if (columnNames == null)
+                return;
+
             if (node.MultiPartIdentifier.Identifiers.Count > 1)
             {
                 string tableName = node.MultiPartIdentifier.Identifiers[0].Value;

@@ -4,11 +4,13 @@ namespace FixQLLibrary
 {
     public class UnionVisitor : TSqlFragmentVisitor
     {
+        public bool Found { get; private set; } = false;
+
         public override void Visit(BinaryQueryExpression node)
         {
             if (node.BinaryQueryExpressionType == BinaryQueryExpressionType.Union)
             {
-                throw new InvalidOperationException("UNION queries are not allowed.");
+                Found = true;
             }
 
             base.Visit(node);

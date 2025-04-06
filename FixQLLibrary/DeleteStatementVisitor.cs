@@ -2,11 +2,11 @@
 
 namespace FixQLLibrary
 {
-    public class WaitForVisitor : TSqlFragmentVisitor
+    public class DeleteStatementVisitor : TSqlFragmentVisitor
     {
         public bool Found { get; private set; } = false;
 
-        public override void Visit(WaitForStatement node)
+        public override void Visit(DeleteStatement node)
         {
             Found = true;
         }
