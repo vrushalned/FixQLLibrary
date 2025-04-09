@@ -9,13 +9,15 @@ namespace FixQLLibrary
             "xp_cmdshell", "OPENROWSET", "sp_executesql", "sp_configure", "CHAR", "WAITFOR"
         };
 
+        public bool Found { get; private set; } = false;
+
         public override void Visit(FunctionCall node)
         {
             string funcName = node.FunctionName?.Value?.Trim();
 
             if (!string.IsNullOrEmpty(funcName) && _dangerousFunctions.Contains(funcName))
             {
-                throw new InvalidOperationException($"Use of dangerous SQL function: {funcName} is not allowed.");
+                Found = true;
             }
         }
     }

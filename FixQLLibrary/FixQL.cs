@@ -70,6 +70,7 @@ namespace FixQLLibrary
                 d.Contains("Piggybacked") ||
                 d.Contains("Multiple") ||
                 d.Contains("DROP") ||
+                d.Contains("FunctionCall") ||
                 d.Contains("UPDATE") ||
                 d.Contains("DELETE") ||
                 d.Contains("EXEC")))
@@ -117,6 +118,7 @@ namespace FixQLLibrary
 
         private static void ApplySecurityVisitors(TSqlFragment fragment, Dictionary<string, object> parameters, List<string> detections)
         {
+            var functionCallVisitor = new FunctionCallVisitor();
             var tautologyVisitor = new TautologyVisitor();
             var unionVisitor = new UnionVisitor();
             var execVisitor = new ExecuteStatementVisitor();
@@ -126,6 +128,7 @@ namespace FixQLLibrary
             var insertVisitor = new InsertStatementVisitor();
             var dropVisitor = new DropStatementVisitor();
 
+            fragment.Accept(functionCallVisitor);
             fragment.Accept(tautologyVisitor);
             fragment.Accept(unionVisitor);
             fragment.Accept(execVisitor);
@@ -135,6 +138,7 @@ namespace FixQLLibrary
             fragment.Accept(insertVisitor);
             fragment.Accept(dropVisitor);
 
+            if (functionCallVisitor.Found) detections.Add("FunctionCall");
             if (tautologyVisitor.Found) detections.Add("Tautology");
             if (unionVisitor.Found) detections.Add("UNION");
             if (execVisitor.Found) detections.Add("EXEC or xp_cmdshell");
